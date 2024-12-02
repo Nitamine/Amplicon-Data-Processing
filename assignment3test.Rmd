@@ -1,0 +1,396 @@
+---
+title: "Amplicon sequencing of the 16S rRNA gene"
+author: "Anita"
+date: "2024-11-19"
+output: html_document
+---
+
+
+```{r}
+# First set your working directory. You can go to "Session" and select the preferred directory or copy and paste the path your directory.
+setwd("C:/Users/Adobea/Desktop/R studio_Anita/Assignment3")
+```
+
+#Install the dada2 package if not already installed
+
+```{r}
+#Install BiocManager if not already done
+#if (!requireNamespace("BiocManager", force = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install("dada2", version = "3.20")
+
+#BiocManager::install(version = '3.20')
+```
+
+# Load the installed pacakage using the library function and the name of the required package 
+
+```{r}
+library(dada2)
+```
+
+#Make an object called path using the set working directory
+```{r}
+path<- setwd("C:/Users/Adobea/Desktop/R studio_Anita/Assignment3")
+```
+
+# List the files in the folder to be sure you are working with the right files
+```{r}
+list.files(path)
+```
+
+#If the package successfully loaded and your listed files match those you are working with then we can move on to Dada2 Pipeline, 
+##Now read the names of fastaq files and performing manipulations to match the forward and reverse fastaq file according the naming convention R1 and R2
+
+```{r}
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
+
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+```
+
+# Inspect the quality of the forward and reverse reads and based on the graphs we will specify where the merge occurs so we can find out where quality dips. Note that this is for the "forwards"
+
+```{r}
+plotQualityProfile(fnFs[1:2])
+# Note that this is for the "Reverse"
+plotQualityProfile(fnRs[1:2])
+```
+# Filter & Trim: At this point we will filter the data that we do not need and trim the ends. First we need to make an object called filtFs and FiltRs and we will truncate at a value. Values may differ from perosn to person but. The graphs created above help to decide on the truncation.
+
+```{r}
+# Place filtered files in filtered/ sub directory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+```
+
+# You can now do the trunaction. This changes depending on the data hence you don't need to put it in a chunk because the values may change all the time. NB : Always set multithread as "false" because it will not run on windows if it is "true"
+
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(260,160),
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE      
+head(out)
+```
+#Learn the Error rates for both Forward read and Reverse reads
+
+```{r}
+errF <- learnErrors(filtFs, multithread=FALSE)
+errR <- learnErrors(filtRs, multithread=FALSE)
+# Visualize the estimated error rates
+plotErrors(errF, nominalQ=TRUE)
+```
+
+#Apply the core sample inference to the filtered and trimmed data sequence
+```{r}
+dadaFs <- dada(filtFs, err=errF, multithread=FALSE)
+dadaRs <- dada(filtRs, err=errR, multithread=FALSE)
+dadaFs[[1]]
+```
+
+#Merge the forward and reverse reads together to obtain the full denoised sequences.
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+```
+
+#Construct a Sequence table(ASV)
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+
+# Remove Chimeras to ensure sequences do not latch on to each other
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=FALSE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+# Make a table to keep track of all samples that may have been filtered, lost. Primarily shows how each step has been affected.
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+#Assigning Taxanomy
+```{r}
+## Files were downloaded from an external link provided in the trianing manual(silva_nr99_v138.1_train_set.fa.gz)
+
+taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE)
+
+taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz", multithread=FALSE)
+
+#Print the outcome to ensure you have have the right files
+```
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+#Save as you go as a CSV file to my computer
+
+```{r}
+#This is useful because of the ease of looking at the file using other tool and also comes in handy when R crashes or to free up memory.  
+#We should save our taxa file ( has our ASVs and their taxonomic ID), and the seqtab.nochim file which lists our seqs without chimeras. We can also save our track file ( useful in publications later)
+write.csv(taxa, file = "C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/taxa.csv")
+write.csv(seqtab.nochim, file = "C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/seqtab.nochim.csv")
+write.csv(track, file = "C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/track.csv")
+```
+
+# Read in your files. This has to be done everytime R studio is opened again after seeting up the working directory.
+
+```{r}
+taxa <- read.csv (file = "C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/taxa.csv")
+seqtab.nochim <- read.csv (file="C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/seqtab.nochim.csv", header= FALSE)
+#I wrote header=FALSE because in this case, I do not want the sequences to be the "row names"
+```
+
+#Next, we will transpose the seqtab.nochim data, to make it match the taxa file structure (and be used for downstream analyses)
+
+```{r}
+flipped_seqtab.nochim<- as.data.frame(t(seqtab.nochim))
+```
+
+#inspect your flipped file, it may have an extra header ( if it has a header that is not the sample names....delete it!)You can do this by : 
+
+```{r}
+colnames(flipped_seqtab.nochim) <- flipped_seqtab.nochim[1,]
+flipped_seqtab.nochim <- flipped_seqtab.nochim[-1,]
+```
+```{r}
+# View to ensure that it is cleaned up.
+summary(flipped_seqtab.nochim)
+```
+#Next we want to change the names of the sequences to "ASVS" ( because it looks nice)
+
+```{r}
+rownames(flipped_seqtab.nochim) <- paste0("ASV", 1:nrow(flipped_seqtab.nochim))
+
+#and remove the sequences column: 
+
+flipped_seqtab.nochim_forself <- flipped_seqtab.nochim[,-1]
+```
+
+#save this transposed file in case it is useful later, it looks nice now. 
+
+```{r}
+write.csv(flipped_seqtab.nochim, file = "C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/flipped_seqtab.nochim.csv")
+
+# This step saves your flipped seqtab no chim file with your taxa data as one data sheet. A new file was created called OTUabund. This step may not really be needed in your analysis but can be useful.
+```
+
+```{r}
+#now we will bind our two datasets together and save on our computers
+OTUabund <- cbind(flipped_seqtab.nochim, taxa)
+write.csv(OTUabund, file="C:/Users/Adobea/Desktop/R studio_Anita/Assignment3/OTUabund.csv")
+```
+
+#Now that we have made that file, we will change our taxa dataframe to be compatible with the taxa file format for Phyloseq( which is to say - it doesnt list the ASVs or sequences in its first column). Check your taxa file before and after this step. It should have the sequences as the first column before, and have them removed after.
+
+```{r}
+taxa<-taxa[-1]
+
+summary(taxa)
+```
+
+#Now we are moving on to Phyloseq. Moving away from dada2 
+#first load the requisite libraries ( you could do this at the begining too if you want)
+
+```{r}
+library(dada2); packageVersion("dada2")
+library(ggplot2)
+library(Biostrings)
+library(RColorBrewer)
+library(phyloseq)
+```
+
+#First lets make a taxa file that works. Currently, it has the first column with sequences, and we want to delete that. Since we have already read in our taxa data ( from our taxa.csv) we can just amend our already existing object. We will call our phyloseq formatted object wit the taxa data "taxmat". We delete the first column by "[,-1]" bec
+
+```{r}
+taxmat <- as.matrix(taxa)
+otumat <-as.matrix(flipped_seqtab.nochim)
+#Check to make sure this looks like what you expect. 
+```
+
+#Next, lets make the OTU table in a way the format that phyloseq needs. We will call this object OTUmat. Similar to above, in class we had done this in excel, but we dont need to. We will instead use our already existing object "flipped_seqtab.nochim" , and again, delete the first column that has the sequences listed. 
+
+```{r}
+otumat <-flipped_seqtab.nochim[,-1]
+#Check that this works! Look at it by clicking, or by using the "View" function
+```
+
+```{r}
+#Lets make sure our files are matrices: 
+#first convert to matrix
+otumat <- as.matrix(otumat)
+taxmat <-as.matrix(taxmat)
+
+#then inspect ( Want it do show its a matrix array)
+class(otumat)
+class(taxmat)
+
+#then make sure the row names for both files are the same and labelled by ASV
+
+rownames(otumat) <- paste0("ASV", 1:nrow(otumat)) 
+rownames(taxmat) <- paste0("ASV", 1:nrow(taxmat))
+
+#then make sure that R recognizes that the OTU data is numeric, not character data
+class(otumat)<-"numeric"
+```
+
+
+#If we now have matrices...we're in business 
+#These are phyloseq specific commands. You dont need to know all of them ( but suggest reading the manual if you use this script often). We are telling phyloseq where our "OTUs" and "Taxa" files are. Phyloseq was built at a time when OTUs were popular....but it works for ASVs too ( obviously)
+
+#Tell phyloseq where our ASVs are
+
+```{r}
+OTU = otu_table(otumat, taxa_are_rows = TRUE)
+```
+#Tell phyloseq where our taxa are
+
+```{r}
+TAX <- tax_table(taxmat)
+```
+
+
+#Now we tell phyloseq to put it all together ( sample names, OTU and taxa) 
+
+```{r}
+physeq = phyloseq(OTU, TAX)
+physeq
+sample_names(physeq)
+samplenames<-sample_names(physeq)
+```
+
+
+```{r}
+identical(rownames(otumat), rownames(taxmat))  # Should return TRUE
+
+rownames(otumat)
+
+rownames(taxmat)
+
+nrow(otumat)
+nrow(taxmat)
+```
+
+# Plot the first graph
+
+```{r}
+p<-plot_bar(physeq, fill = "Phylum")
+p
+#note, if you want this to show in your plot pane, make sure you enter this code in your console, not just in your script. 
+```
+##This is an OK start, but the line that represent each ASV do not make it nice. We can try a graph that removes them
+
+```{r}
+pstacked<- p + geom_bar(aes(fill=Phylum), stat="identity", position="stack")
+pstacked
+```
+#First - we use the "tax_glom" of phyloseq to glom together taxa based on the column of your choosing. Here I will do it by Phylum.
+```{r}
+ps_phylum <- tax_glom(physeq, "Phylum")
+```
+
+#note - we can also use this glom function to glom together taxa for graphing! ( instead of "identity=stacked").
+
+```{r}
+plot_bar(ps_phylum, fill = "Phylum")
+```
+#After we glom together our taxa by Phylum, we will make a table of relative abundance by tallying up each taxa, and dividing by the total taxa ( eg. what percentage of the total is each phylum in each sample). Again, note where I am specifying the column I am interested in ("Phylum"). 
+
+```{r}
+ps_phylum_relabun <- transform_sample_counts(ps_phylum, function(ASV) ASV/sum(ASV))
+taxa_abundance_table_phylum <- psmelt(ps_phylum_relabun)
+taxa_abundance_table_phylum$Phylum<-factor(taxa_abundance_table_phylum$Phylum)
+```
+
+#and now we can plot the graph uisng Phylum:  
+```{r}
+plot_bar(ps_phylum_relabun, fill = "Phylum")
+```
+# Add a title to make it explanatory
+```{r}
+plot_bar(ps_phylum_relabun, fill = "Phylum") + 
+  ggtitle("Relative Abundance of Phyla in Samples")
+```
+# Plot the second graph ( This is for "Order")
+```{r}
+p<-plot_bar(physeq, fill = "Order")
+p
+#note, if you want this to show in your plot pane, make sure you enter this code in your console, not just in your script. 
+```
+
+##This is an OK start, but the line that represent each ASV do not make it nice. We can try a graph that removes them
+
+```{r}
+pstacked<- p + geom_bar(aes(fill=Order), stat="identity", position="stack")
+pstacked
+```
+#First - we use the "tax_glom" of phyloseq to glom together taxa based on the column of your choosing. Here I will do it by Order
+
+```{r}
+ps_order <- tax_glom(physeq, "Order")
+```
+
+#note - we can also use this glom function to glom together taxa for graphing! ( instead of "identity=stacked").
+
+```{r}
+plot_bar(ps_order, fill = "Order")
+```
+#after we glom together our taxa by Phylum, we will make a table of relative abundance by tallying up each taxa, and dividing by the total taxa ( eg. what percentage of the total is each phylum in each sample). Again, note where I am specifying the column I am interested in ("Phylum"). Reflect on --> What would you change if you wanted to do something similar but for "Family"?
+
+```{r}
+ps_order_relabun <- transform_sample_counts(ps_order, function(ASV) ASV/sum(ASV))
+taxa_abundance_table_order <- psmelt(ps_order_relabun)
+taxa_abundance_table_order$Order<-factor(taxa_abundance_table_order$Order)
+```
+
+#and now to graph using the "Order"
+```{r}
+plot_bar(ps_order_relabun, fill = "Order")
+```
+# Add a title to make it explanatory
+```{r}
+plot_bar(ps_order_relabun, fill = "Order") + 
+  ggtitle("Relative Abundance of Order in Samples")
+```
+#Tweaking existing Scripts: Making geom_point graphs
+
+```{r}
+# Transform sample counts to relative abundance
+ps_relabun <- transform_sample_counts(ps_phylum, function(x) x / sum(x))
+
+# Melt phyloseq object into a dataframe
+df <- psmelt(ps_relabun)
+```
+
+```{r}
+# Plot with geom_point
+ggplot(df, aes(x = Sample, y = Phylum, size = Abundance, color = Phylum)) +
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal() +
+  labs(
+    title = "Relative Abundance of Phyla by Sample",
+    x = "Sample",
+    y = "Phylum",
+    size = "Relative Abundance"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+

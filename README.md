@@ -1,6 +1,6 @@
 # Amplicon-Data-Processing
 
-This repository contains a system for processing 16S rRNA amplicon sequencing data that is optimised for microbial ecology research. It helps with quality control, taxonomy classification, and data visualisation.
+This repository contains a system for processing 16S rRNA amplicon sequencing data that is optimized for microbial ecology research. It helps with quality control, taxonomy classification, and data visualization.
 
 ## Features
 - Quality filtering of raw sequences.
